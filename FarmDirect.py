@@ -76,16 +76,19 @@ def login_user(username, password):
     hashed_password = hash_password(password)
     with engine.connect() as conn:
         user = conn.execute("SELECT * FROM users WHERE username=? AND password=?", (username, hashed_password)).fetchone()
-    return user
+        if user:
+            return dict(user)
+    return None
 
 # Function to register a new user
 def register_user(username, password, role):
     with engine.connect() as conn:
         try:
-            conn.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", (username, hash_password(password), role))
+            conn.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+                         (username, hash_password(password), role))
             st.success("User registered successfully!")
         except Exception as e:
-            st.error(f"Error registering user: {e}")
+            st.error(f"Error registering user: {str(e)}")
 
 # Authentication and user role selection
 def user_auth():
@@ -103,7 +106,7 @@ def user_auth():
                 st.sidebar.success(f"Welcome, {user['username']}!")
             else:
                 st.sidebar.error("Invalid credentials!")
-    
+
     elif choice == "Register":
         username = st.sidebar.text_input("New Username")
         password = st.sidebar.text_input("New Password", type="password")
@@ -139,18 +142,24 @@ def farmer_registration():
 def product_listing():
     st.header("List Your Produce")
 
-    farmer_id = st.session_state['user']['id']  # Assume user is logged in as a farmer
+    with engine.connect() as conn:
+        farmer = conn.execute("SELECT * FROM farmers WHERE user_id = ?", (st.session_state['user']['id'],)).fetchone()
+
+    if not farmer:
+        st.warning("Please register your farm first!")
+        return
+
     with st.form("list_product_form"):
         product_name = st.text_input("Product Name")
-        quantity = st.number_input("Quantity (kg)")
-        price = st.number_input("Price per kg ($)")
+        quantity = st.number_input("Quantity (kg)", min_value=0.0)
+        price = st.number_input("Price per kg ($)", min_value=0.0)
         submit = st.form_submit_button("List Product")
 
         if submit:
             with engine.connect() as conn:
                 conn.execute(
                     "INSERT INTO products (farmer_id, name, quantity, price) VALUES (?, ?, ?, ?)",
-                    (farmer_id, product_name, quantity, price)
+                    (farmer['id'], product_name, quantity, price)
                 )
             st.success("Product listed successfully!")
 
@@ -168,7 +177,7 @@ def display_products():
     if not df.empty:
         selected_product = st.selectbox("Select Product to Buy", df["id"])
         if st.button("Contact Farmer"):
-            st.info("Contact farmer to negotiate price.")
+            st.info("Contact farmer to negotiate price. (Messaging feature coming soon!)")
 
 # Order management function
 def manage_orders():
@@ -186,13 +195,16 @@ def manage_orders():
 # Analytics dashboard function
 def analytics_dashboard():
     st.header("Sales Analytics")
-    
+
     with engine.connect() as conn:
         sales_data = pd.read_sql(
-            "SELECT p.name, SUM(o.quantity) as total_sold FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.name",
+            "SELECT p.name, COUNT(o.id) as total_sold FROM products p JOIN orders o ON p.id = o.product_id GROUP BY p.name",
             conn
         )
-    st.bar_chart(sales_data.set_index('name'))
+    if not sales_data.empty:
+        st.bar_chart(sales_data.set_index('name'))
+    else:
+        st.info("No sales data available.")
 
 # Main menu navigation logic
 def main():
